@@ -1,0 +1,107 @@
+# -*- coding:utf-8 -*-
+'''
+@software: scikit_learn
+@Time    : 2018/08/10 21:28
+@Author  :{liqibao}
+@E-mail  :{931470099@qq.com}
+特征工程之时间型特征处理
+'''
+
+import pandas as pd
+data=pd.read_csv('kaggle_bike_competition_train.csv', header=0,error_bad_lines=False)
+
+t_data=data.head()
+
+
+"""--------------------时间型特征-------------------------------------
+   既可以看作是连续型，也可以看作是离散型，比如浏览一个网页的停留时间，
+一周中的某天、24小时中的某时。。
+   比如收集到的时间信息为2015-10-21 15:30:55,我们可以构造出季节特征：
+season=[0,0,1,1,1,2,2,2,3,3,3,0],每天24h的吃饭睡觉规律特征： sleep:12-5,6-9
+breakfast:10-14,luanch:14-17等等
+   这里，把datetime细分为日期和时间两部分
+"""
+temp=pd.DatetimeIndex(data['datetime'])
+data['date']=temp.date #添加date和time两个键和值
+data['time']=temp.time
+
+#由于时间的部分最小粒度为小时，所以把time变为hour更加简洁
+data['hour']=pd.to_datetime(data.time,format="%H:%M:%S")#变换格式
+data['hour']=pd.Index(data["hour"]).hour
+
+data['dayofweek']=pd.DatetimeIndex(data.date).dayofweek #提取出星期几这个特征
+data['dateDays']=(data.date-data.date[0]).astype('timedelta64[D]') #计算总共多少天
+
+#统计每个星期没注册用户的租赁情况
+byday=data.groupby('dayofweek')
+byday['casual'].sum().reset_index()
+"""
+   dayofweek  casual
+0          0   46288
+1          1   35365
+2          2   34931
+3          3   37283
+4          4   47402
+5          5  100782
+6          6   90084
+"""
+byday['registered'].sum().reset_index()#注册用户
+"""
+   dayofweek  registered
+0          0      249008
+1          1      256620
+2          2      257295
+3          3      269118
+4          4      255102
+5          5      210736
+6          6      195462
+"""
+#把周六和周日两天单独提取出来
+data['Saturday']=0
+data.Saturday[data.dayofweek==5]=1 #0表示没用到车，1表示用了
+
+data['Sunday']=0
+data.Sunday[data.dayofweek==6]=1
+
+#把旧的时间特征去掉
+dataRel=data.drop(['datetime','count','date','time','dayofweek'],axis=1)
+
+
+"""------------------特征向量化-------------------------------------------------
+    把连续值和离散值分放到两个dict中，对连续值特征进行标准化（使其均值为0、方差为1），
+离散值特征进行one-hot编码出来，最后再把两个dict进行合并
+"""
+from sklearn.feature_extraction import DictVectorizer
+#连续值：
+featureConCols = ['temp','atemp','humidity','windspeed','dateDays','hour']
+dataFeatureCon = dataRel[featureConCols]
+dataFeatureCon = dataFeatureCon.fillna( 'NA' ) #in case I missed any
+X_dictCon = dataFeatureCon.T.to_dict().values()
+
+#离散值：
+featureCatCols = ['season','holiday','workingday','weather','Saturday', 'Sunday']
+dataFeatureCat = dataRel[featureCatCols]
+dataFeatureCat = dataFeatureCat.fillna( 'NA' ) #in case I missed any
+X_dictCat = dataFeatureCat.T.to_dict().values()
+
+#向量化特征,转换为numpy矩阵
+vec=DictVectorizer(sparse=False)
+X_vec_cat=vec.fit_transform(X_dictCat)
+X_vec_con=vec.fit_transform(X_dictCon)
+
+
+#连续值特征标准化，对模型训练的收敛和提高准确性有好处
+from sklearn import preprocessing
+scaler=preprocessing.StandardScaler().fit(X_vec_con)
+X_vec_con_ed=scaler.transform(X_vec_con)
+
+#对离散值进行one-hot编码
+enc=preprocessing.OneHotEncoder()
+enc.fit(X_vec_cat)
+X_vec_cat_ed=enc.transform(X_vec_cat).toarray()
+
+#把离散特征和连续特征组合
+import numpy as np
+X_vec=np.concatenate((X_vec_con_ed,X_vec_cat_ed),axis=1)
+
+
